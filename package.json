@@ -1,15 +1,32 @@
 {
   "name": "launchpad-shortcut-deck",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "private": true,
+  "type": "module",
+  "description": "Turn your Novation Launchpad into a macOS shortcut deck with real-time LED feedback",
+  "main": "src/main.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node .",
+    "test": "echo \"No tests configured\" && exit 0"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "keywords": [
+    "launchpad",
+    "novation-launchpad",
+    "midi",
+    "macos",
+    "shortcuts",
+    "app-launcher"
+  ],
+  "author": "Sergio Santiago Henares <sersanhen@gmail.com> (https://github.com/sergio-santiago)",
+  "license": "GPL-3.0-or-later",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sergio-santiago/launchpad-shortcut-deck"
+  },
   "packageManager": "pnpm@10.14.0",
+  "engines": {
+    "node": "22.x"
+  },
   "dependencies": {
     "@julusian/midi": "^3.6.1"
   }
