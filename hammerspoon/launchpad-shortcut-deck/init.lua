@@ -4,7 +4,7 @@
 
 -- Generic Lua API for application/window control from Node via AppleScript.
 -- All public functions return the string "ok" or "err" to keep IPC predictable.
--- NOTE: For window manipulation (minimize/maximize/fullscreen/close windows), Hammerspoon
+-- NOTE: For window manipulation (minimize/maximize/fullscreen/close), Hammerspoon
 --       may need Accessibility permission in macOS Privacy & Security.
 
 -- Allow AppleScript (osascript) to run Lua code inside Hammerspoon.
@@ -125,31 +125,8 @@ function launchpad_shortcut_deck_focus(s)
 end
 
 -- launchpad_shortcut_deck_close:
--- Attempt to quit the app. Uses :kill() when possible; otherwise falls back
--- to AppleScript (by name or by bundle id).
-function launchpad_shortcut_deck_close(s)
-  local t = parseTarget(s)
-  local app = resolveApp(t) or ensureApp(t, 6, 100000)
-  if app and app.kill then
-    app:kill()
-    return "ok"
-  end
-  -- Generic AppleScript fallback
-  local nameOrBid = t.value
-  local as
-  if t.kind == "bundle" then
-    -- AppleScript quits by app id (bundle id) using 'application id "<BUNDLE>"'
-    as = 'tell application id "'..nameOrBid..'" to quit'
-  else
-    as = 'tell application "'..nameOrBid..'" to quit'
-  end
-  local okAS = hs.osascript.applescript(as)
-  return okAS and "ok" or "err"
-end
-
--- launchpad_shortcut_deck_close_windows:
 -- Close all windows of the app but keep the process running (do NOT quit).
-function launchpad_shortcut_deck_close_windows(s)
+function launchpad_shortcut_deck_close(s)
   local t = parseTarget(s)
   local app = resolveApp(t) or ensureApp(t)
   if not app then return "err" end
@@ -178,6 +155,29 @@ function launchpad_shortcut_deck_close_windows(s)
   -- If there were no windows, consider "ok" (process remains in memory)
   if #wins == 0 or closedAny then return "ok" end
   return "err"
+end
+
+-- launchpad_shortcut_deck_quit:
+-- Attempt to quit the app. Uses :kill() when possible; otherwise falls back
+-- to AppleScript (by name or by bundle id).
+function launchpad_shortcut_deck_quit(s)
+  local t = parseTarget(s)
+  local app = resolveApp(t) or ensureApp(t, 6, 100000)
+  if app and app.kill then
+    app:kill()
+    return "ok"
+  end
+  -- Generic AppleScript fallback
+  local nameOrBid = t.value
+  local as
+  if t.kind == "bundle" then
+    -- AppleScript quits by app id (bundle id) using 'application id "<BUNDLE>"'
+    as = 'tell application id "'..nameOrBid..'" to quit'
+  else
+    as = 'tell application "'..nameOrBid..'" to quit'
+  end
+  local okAS = hs.osascript.applescript(as)
+  return okAS and "ok" or "err"
 end
 
 -- launchpad_shortcut_deck_minimize:

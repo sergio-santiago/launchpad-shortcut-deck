@@ -55,12 +55,12 @@ export {ensureReady};
  * - `"Safari"` → `"Safari"`
  * - `"Visual Studio Code"` → `"bundle:com.microsoft.VSCode"` (per current resolver)
  *
- * @type {{[k in 'open'|'close'|'closeWindows'|'minimize'|'maximize'|'fullscreen'|'focus']: (app: string, ...args: any[]) => Promise<string>}}
+ * @type {{[k in 'open'|'close'|'quit'|'minimize'|'maximize'|'fullscreen'|'focus']: (app: string, ...args: any[]) => Promise<string>}}
  */
 export const actions = {
     open: (app) => callOSA(`launchpad_shortcut_deck_open([[${resolveTarget(app)}]])`),
     close: (app) => callOSA(`launchpad_shortcut_deck_close([[${resolveTarget(app)}]])`),
-    closeWindows: (app) => callOSA(`launchpad_shortcut_deck_close_windows([[${resolveTarget(app)}]])`),
+    quit: (app) => callOSA(`launchpad_shortcut_deck_quit([[${resolveTarget(app)}]])`),
     minimize: (app) => callOSA(`launchpad_shortcut_deck_minimize([[${resolveTarget(app)}]])`),
     maximize: (app) => callOSA(`launchpad_shortcut_deck_maximize([[${resolveTarget(app)}]])`),
     fullscreen: (app, on = true) => callOSA(`launchpad_shortcut_deck_fullscreen([[${resolveTarget(app)}]], ${on ? 'true' : 'false'})`),

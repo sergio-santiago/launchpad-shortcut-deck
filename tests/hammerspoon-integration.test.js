@@ -2,7 +2,7 @@
 // Run with: pnpm test:hammerspoon
 
 // Purpose: Manual integration test for the Hammerspoon bridge.
-// Runs through a series of open/focus/minimize/maximize/fullscreen/close windows/close
+// Runs through a series of open/focus/minimize/maximize/fullscreen/close/quit
 // operations for a list of applications, with small delays between them,
 // so you can manually verify everything works end-to-end.
 
@@ -73,7 +73,7 @@ async function run(label, fn) {
  *  6. Toggle fullscreen ON and OFF.
  *  7. Close windows (keep running) — close all windows while keeping the process in memory.
  *  8. Focus + Open — bring the app forward again and ensure a new window is created.
- *  9. Close (quit) — fully quit the application (equivalent to ⌘Q).
+ *  9. Quit — fully quit the application (equivalent to ⌘Q).
  *
  * This sequence validates both “soft close” (windows only) and “hard close” (quit app) behaviors.
  *
@@ -95,16 +95,16 @@ async function run(label, fn) {
     await run(`${app} · fullscreen OFF`, () => hs.fullscreen(app, false))
 
     // --- new: close windows but keep the process running ---
-    await run(`${app} · close windows (keep running)`, () => hs.closeWindows(app))
+    await run(`${app} · close windows (keep running)`, () => hs.close(app))
 
     // Bring the app to the front again; some apps won't open a window on focus,
     // so ensure a window exists by calling open explicitly
-    await run(`${app} · focus (after close-windows)`, () => hs.focus(app))
+    await run(`${app} · focus (after close)`, () => hs.focus(app))
     await run(`${app} · open (ensure window)`, () => hs.open(app))
     await sleep(D.afterOpen)
 
     // --- final: quit the app completely ---
-    await run(`${app} · close (quit)`, () => hs.close(app))
+    await run(`${app} · quit`, () => hs.quit(app))
     await sleep(D.afterClose)
 }
 
@@ -118,7 +118,7 @@ async function main() {
     await ensureReady()
     console.log('[OK] Hammerspoon ready')
 
-    // IMPORTANT: For minimize/maximize/fullscreen/closeWindows to work,
+    // IMPORTANT: For minimize/maximize/fullscreen/close to work,
     // grant Hammerspoon Accessibility permissions in:
     //   System Settings → Privacy & Security → Accessibility
 
