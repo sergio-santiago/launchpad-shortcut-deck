@@ -1,6 +1,6 @@
 # 🎛 Launchpad Shortcut Deck
 
-Turn your **Novation Launchpad** into a macOS shortcut deck with **real-time LED feedback**.  
+Turn your [**Novation Launchpad**](https://novationmusic.com/launchpad) into a macOS shortcut deck with **real-time LED feedback**.  
 Assign buttons to apps and control them instantly (launch, focus, minimize, or close windows) with LEDs that always
 stay in sync with your system.
 
@@ -26,8 +26,7 @@ For detailed LED behavior and interaction rules, see [**Technical Specification*
 - [pnpm](https://pnpm.io/) as the package manager.
 - A [**Novation Launchpad**](https://novationmusic.com/launchpad) connected via USB.  
   *Developed and tested with a Launchpad S model.*
-- [**Hammerspoon**](https://www.hammerspoon.org) — required for macOS app control (
-  see [setup below](#-hammerspoon-setup-required-for-macos-app-control)).
+- [**Hammerspoon**](https://www.hammerspoon.org) — required for macOS app control (see [setup below](#-hammerspoon-setup-required-for-macos-app-control)).
 
 ---
 
@@ -104,6 +103,20 @@ pnpm start
 
 > The app will check if Hammerspoon is running and attempt to launch it if not found.
 > On the first run, you may need to grant Accessibility permissions to Hammerspoon when prompted by macOS.
+
+### ❗ Troubleshooting
+
+- **`HS_FUNCS_MISSING: ...`**  
+  Hammerspoon started but the Lua API wasn’t loaded yet. Ensure:
+    - The symlink/copy is correct:  
+      `~/.hammerspoon/launchpad-shortcut-deck/init.lua`
+    - `~/.hammerspoon/init.lua` contains:  
+      `require('launchpad-shortcut-deck')`
+    - Reload Hammerspoon config (menu bar icon → *Reload Config*).
+
+- **Actions fail for window operations (minimize/maximize/fullscreen):**  
+  Grant Hammerspoon **Accessibility** permission:  
+  *System Settings → Privacy & Security → Accessibility*.
 
 ---
 
