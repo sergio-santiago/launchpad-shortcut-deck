@@ -1,7 +1,7 @@
 /**
  * Preflight checks for the Hammerspoon integration.
  *
- * Ensures that the custom Lua API functions (lsd_*) are loaded and callable
+ * Ensures that the custom Lua API functions (launchpad_shortcut_deck_*) are loaded and callable
  * before the rest of the app runs. This is done by asking Hammerspoon (via
  * AppleScript) to execute small Lua snippets that verify each function exists.
  */
@@ -32,7 +32,7 @@ function runOSA(luaChunk, timeoutMs = 6000) {
 /**
  * Checks whether a given global Lua symbol is a function in the Hammerspoon runtime.
  *
- * @param {string} name - Global symbol name (e.g., "lsd_open").
+ * @param {string} name - Global symbol name (e.g., "launchpad_shortcut_deck_open").
  * @returns {Promise<boolean>} - True if the symbol is a function, false otherwise.
  */
 async function checkFunc(name) {
@@ -50,7 +50,7 @@ async function checkFunc(name) {
  * @throws {Error} If any functions are still missing after all retries.
  */
 export async function ensureReady({retries = 12, delayMs = 300} = {}) {
-    const required = ['lsd_open', 'lsd_close', 'lsd_minimize', 'lsd_maximize', 'lsd_fullscreen', 'lsd_focus'];
+    const required = ['launchpad_shortcut_deck_open', 'launchpad_shortcut_deck_close', 'launchpad_shortcut_deck_minimize', 'launchpad_shortcut_deck_maximize', 'launchpad_shortcut_deck_fullscreen', 'launchpad_shortcut_deck_focus'];
 
     for (let i = 0; i < retries; i++) {
         const missing = [];

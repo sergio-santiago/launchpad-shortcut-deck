@@ -106,17 +106,17 @@ end
 
 -- ===== Public API (string-return) =====
 
--- lsd_open:
+-- launchpad_shortcut_deck_open:
 -- Launch or focus the target application. Does not guarantee a new window.
-function lsd_open(s)
+function launchpad_shortcut_deck_open(s)
   local t = parseTarget(s)
   launchOrFocus(t)
   return "ok"
 end
 
--- lsd_focus:
+-- launchpad_shortcut_deck_focus:
 -- Bring the app to the front. Launches first if needed.
-function lsd_focus(s)
+function launchpad_shortcut_deck_focus(s)
   local t = parseTarget(s)
   local app = resolveApp(t) or ensureApp(t)
   if not app then return "err" end
@@ -124,10 +124,10 @@ function lsd_focus(s)
   return "ok"
 end
 
--- lsd_close:
+-- launchpad_shortcut_deck_close:
 -- Attempt to quit the app. Uses :kill() when possible; otherwise falls back
 -- to AppleScript (by name or by bundle id).
-function lsd_close(s)
+function launchpad_shortcut_deck_close(s)
   local t = parseTarget(s)
   local app = resolveApp(t) or ensureApp(t, 6, 100000)
   if app and app.kill then
@@ -147,9 +147,9 @@ function lsd_close(s)
   return okAS and "ok" or "err"
 end
 
--- lsd_minimize:
+-- launchpad_shortcut_deck_minimize:
 -- Minimize the app’s primary window if available.
-function lsd_minimize(s)
+function launchpad_shortcut_deck_minimize(s)
   local t = parseTarget(s)
   local app = resolveApp(t) or ensureApp(t)
   if not app then return "err" end
@@ -158,9 +158,9 @@ function lsd_minimize(s)
   return "err"
 end
 
--- lsd_maximize:
+-- launchpad_shortcut_deck_maximize:
 -- Maximize the app’s primary window if available.
-function lsd_maximize(s)
+function launchpad_shortcut_deck_maximize(s)
   local t = parseTarget(s)
   local app = resolveApp(t) or ensureApp(t)
   if not app then return "err" end
@@ -169,9 +169,9 @@ function lsd_maximize(s)
   return "err"
 end
 
--- lsd_fullscreen:
+-- launchpad_shortcut_deck_fullscreen:
 -- Toggle fullscreen for the app’s primary window (true to enable, false to exit).
-function lsd_fullscreen(s, val)
+function launchpad_shortcut_deck_fullscreen(s, val)
   local t = parseTarget(s)
   local app = resolveApp(t) or ensureApp(t)
   if not app then return "err" end

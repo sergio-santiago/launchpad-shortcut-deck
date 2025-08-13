@@ -1,5 +1,5 @@
 /**
- * Thin wrapper around the Hammerspoon Lua API (lsd_* functions).
+ * Thin wrapper around the Hammerspoon Lua API (launchpad_shortcut_deck_* functions).
  *
  * - Communicates with Hammerspoon via AppleScript (`osascript`) by asking it
  *   to execute Lua code snippets.
@@ -58,10 +58,10 @@ export {ensureReady};
  * @type {{[k in 'open'|'close'|'minimize'|'maximize'|'fullscreen'|'focus']: (app: string, ...args: any[]) => Promise<string>}}
  */
 export const actions = {
-    open: (app) => callOSA(`lsd_open([[${resolveTarget(app)}]])`),
-    close: (app) => callOSA(`lsd_close([[${resolveTarget(app)}]])`),
-    minimize: (app) => callOSA(`lsd_minimize([[${resolveTarget(app)}]])`),
-    maximize: (app) => callOSA(`lsd_maximize([[${resolveTarget(app)}]])`),
-    fullscreen: (app, on = true) => callOSA(`lsd_fullscreen([[${resolveTarget(app)}]], ${on ? 'true' : 'false'})`),
-    focus: (app) => callOSA(`lsd_focus([[${resolveTarget(app)}]])`),
+    open: (app) => callOSA(`launchpad_shortcut_deck_open([[${resolveTarget(app)}]])`),
+    close: (app) => callOSA(`launchpad_shortcut_deck_close([[${resolveTarget(app)}]])`),
+    minimize: (app) => callOSA(`launchpad_shortcut_deck_minimize([[${resolveTarget(app)}]])`),
+    maximize: (app) => callOSA(`launchpad_shortcut_deck_maximize([[${resolveTarget(app)}]])`),
+    fullscreen: (app, on = true) => callOSA(`launchpad_shortcut_deck_fullscreen([[${resolveTarget(app)}]], ${on ? 'true' : 'false'})`),
+    focus: (app) => callOSA(`launchpad_shortcut_deck_focus([[${resolveTarget(app)}]])`),
 };
