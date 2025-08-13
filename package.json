@@ -6,6 +6,7 @@
   "description": "Turn your Novation Launchpad into a macOS shortcut deck with real-time LED feedback",
   "main": "src/main.js",
   "scripts": {
+    "prestart": "node hammerspoon/ensure-hs.js",
     "start": "node .",
     "test": "echo \"No tests configured\" && exit 0"
   },
