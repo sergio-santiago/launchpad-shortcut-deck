@@ -27,7 +27,8 @@ For detailed LED behavior and interaction rules, see [**Technical Specification*
 - [pnpm](https://pnpm.io/) as the package manager.
 - A [**Novation Launchpad**](https://novationmusic.com/launchpad) connected via USB.  
   *Developed and tested with a Launchpad S model.*
-- [**Hammerspoon**](https://www.hammerspoon.org) — required for macOS app control (see [setup below](#-hammerspoon-setup-required-for-macos-app-control)).
+- [**Hammerspoon**](https://www.hammerspoon.org) — required for macOS app control (
+  see [setup below](#-hammerspoon-setup-required-for-macos-app-control)).
 
 ---
 
@@ -113,7 +114,9 @@ You can verify macOS application control via Hammerspoon by running:
 pnpm test:hammerspoon
 ```
 
-This command will open, focus, minimize, maximize, fullscreen, and close each app listed in the `APPS` constant inside
+This command will open, focus, minimize, maximize, toggle fullscreen,
+close all windows while keeping the app running, re-open a window,
+and finally quit each app listed in the `APPS` constant inside
 `tests/hammerspoon-integration.test.js`.  
 You can edit that array to select which apps to test.
 
@@ -129,7 +132,7 @@ You can edit that array to select which apps to test.
       `require('launchpad-shortcut-deck')`
     - Reload Hammerspoon config (menu bar icon → *Reload Config*).
 
-- **Actions fail for window operations (minimize/maximize/fullscreen):**  
+- **Actions fail for window operations (minimize/maximize/fullscreen/close windows):**  
   Grant Hammerspoon **Accessibility** permission:  
   *System Settings → Privacy & Security → Accessibility*.
 

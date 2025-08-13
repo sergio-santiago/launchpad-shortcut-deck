@@ -4,7 +4,7 @@
 
 -- Generic Lua API for application/window control from Node via AppleScript.
 -- All public functions return the string "ok" or "err" to keep IPC predictable.
--- NOTE: For window manipulation (minimize/maximize/fullscreen), Hammerspoon
+-- NOTE: For window manipulation (minimize/maximize/fullscreen/close windows), Hammerspoon
 --       may need Accessibility permission in macOS Privacy & Security.
 
 -- Allow AppleScript (osascript) to run Lua code inside Hammerspoon.
@@ -145,6 +145,39 @@ function launchpad_shortcut_deck_close(s)
   end
   local okAS = hs.osascript.applescript(as)
   return okAS and "ok" or "err"
+end
+
+-- launchpad_shortcut_deck_close_windows:
+-- Close all windows of the app but keep the process running (do NOT quit).
+function launchpad_shortcut_deck_close_windows(s)
+  local t = parseTarget(s)
+  local app = resolveApp(t) or ensureApp(t)
+  if not app then return "err" end
+
+  -- Get all windows (may be empty if the app has no UI yet)
+  local wins = app.allWindows and app:allWindows() or {}
+
+  -- If there are minimized windows, unminimize so close() can act on them
+  local hadMinimized = false
+  for _, w in ipairs(wins) do
+    if w:isMinimized() then w:unminimize(); hadMinimized = true end
+  end
+  if hadMinimized then hs.timer.usleep(120000) end -- short pause
+
+  -- Close all standard windows
+  local closedAny = false
+  for _, w in ipairs(app:allWindows() or {}) do
+    -- In most apps close() is enough; filter out non-standard windows for safety
+    local ok, isStd = pcall(function() return w:isStandard() end)
+    if not ok or isStd then
+      w:close()
+      closedAny = true
+    end
+  end
+
+  -- If there were no windows, consider "ok" (process remains in memory)
+  if #wins == 0 or closedAny then return "ok" end
+  return "err"
 end
 
 -- launchpad_shortcut_deck_minimize:

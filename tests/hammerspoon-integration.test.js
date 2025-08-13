@@ -2,7 +2,7 @@
 // Run with: pnpm test:hammerspoon
 
 // Purpose: Manual integration test for the Hammerspoon bridge.
-// Runs through a series of open/focus/minimize/maximize/fullscreen/close
+// Runs through a series of open/focus/minimize/maximize/fullscreen/close windows/close
 // operations for a list of applications, with small delays between them,
 // so you can manually verify everything works end-to-end.
 
@@ -25,10 +25,10 @@ const APPS = ['Safari', 'Visual Studio Code', 'Google Chrome', 'Music'] // Add m
  * Adjust to account for application load times and macOS animations.
  */
 const D = {
-    afterOpen: 900,        // Wait after opening before the next action
-    betweenOps: 500,       // Default gap between actions
-    afterFullscreen: 900,  // Wait after entering/exiting fullscreen
-    afterClose: 700,       // Wait after closing
+    afterOpen: 1200,       // Wait after opening before the next action
+    betweenOps: 800,       // Default gap between actions
+    afterFullscreen: 1200, // Wait after entering/exiting fullscreen
+    afterClose: 1000,      // Wait after closing
 }
 
 /** Utility: pause execution for a given number of milliseconds. */
@@ -36,6 +36,9 @@ const sleep = (ms) => new Promise(res => setTimeout(res, ms))
 
 /** Utility: check if a returned value is a lowercase "ok" string. */
 const ok = (v) => typeof v === 'string' && v.trim().toLowerCase() === 'ok'
+
+/** Tracks whether any action in the test sequence has failed. */
+let hadError = false;
 
 /**
  * Run a single Hammerspoon action and log the result with emojis.
@@ -46,33 +49,39 @@ const ok = (v) => typeof v === 'string' && v.trim().toLowerCase() === 'ok'
  */
 async function run(label, fn) {
     try {
-        const res = await fn()
-        const isOk = ok(res)
-        console.log(`${isOk ? '✅' : '⚠️'} ${label}:`, res)
-        return isOk
+        const res = await fn();
+        const isOk = ok(res);
+        console.log(`${isOk ? '✅' : '⚠️'} ${label}:`, res);
+        if (!isOk) hadError = true;
+        return isOk;
     } catch (e) {
-        console.error(`❌ ${label}:`, e?.message || e)
-        return false
+        console.error(`❌ ${label}:`, e?.message || e);
+        hadError = true;
+        return false;
     } finally {
-        await sleep(D.betweenOps)
+        await sleep(D.betweenOps);
     }
 }
 
 /**
  * Test all operations for a single application in order:
- *  1. Open
- *  2. Focus
- *  3. Minimize
- *  4. Focus again
- *  5. Maximize
- *  6. Toggle fullscreen ON and OFF
- *  7. Close
+ *  1. Open — launch the app if not running.
+ *  2. Focus — bring it to the front.
+ *  3. Minimize — minimize the main window.
+ *  4. Focus again — restore focus after minimizing.
+ *  5. Maximize — maximize the main window.
+ *  6. Toggle fullscreen ON and OFF.
+ *  7. Close windows (keep running) — close all windows while keeping the process in memory.
+ *  8. Focus + Open — bring the app forward again and ensure a new window is created.
+ *  9. Close (quit) — fully quit the application (equivalent to ⌘Q).
+ *
+ * This sequence validates both “soft close” (windows only) and “hard close” (quit app) behaviors.
  *
  * @param {string} app - Human-readable application name.
- */
-async function testOne(app) {
+ */async function testOne(app) {
     console.log(`\n───────────── Testing: ${app} ─────────────`)
 
+    // --- initial cycle ---
     await run(`${app} · open`, () => hs.open(app))
     await sleep(D.afterOpen)
 
@@ -85,7 +94,17 @@ async function testOne(app) {
     await sleep(D.afterFullscreen)
     await run(`${app} · fullscreen OFF`, () => hs.fullscreen(app, false))
 
-    await run(`${app} · close`, () => hs.close(app))
+    // --- new: close windows but keep the process running ---
+    await run(`${app} · close windows (keep running)`, () => hs.closeWindows(app))
+
+    // Bring the app to the front again; some apps won't open a window on focus,
+    // so ensure a window exists by calling open explicitly
+    await run(`${app} · focus (after close-windows)`, () => hs.focus(app))
+    await run(`${app} · open (ensure window)`, () => hs.open(app))
+    await sleep(D.afterOpen)
+
+    // --- final: quit the app completely ---
+    await run(`${app} · close (quit)`, () => hs.close(app))
     await sleep(D.afterClose)
 }
 
@@ -99,12 +118,17 @@ async function main() {
     await ensureReady()
     console.log('[OK] Hammerspoon ready')
 
-    // IMPORTANT: For minimize/maximize/fullscreen to work,
+    // IMPORTANT: For minimize/maximize/fullscreen/closeWindows to work,
     // grant Hammerspoon Accessibility permissions in:
     //   System Settings → Privacy & Security → Accessibility
 
     for (const app of APPS) {
         await testOne(app)
+    }
+
+    if (hadError) {
+        console.error('\n[FAIL] One or more actions failed.')
+        process.exit(1)
     }
 
     console.log('\n[DONE] Test suite finished.')
