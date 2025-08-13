@@ -1,6 +1,7 @@
 # 🎛 Launchpad Shortcut Deck
 
-Turn your [**Novation Launchpad**](https://novationmusic.com/launchpad) into a macOS shortcut deck with **real-time LED feedback**.  
+Turn your [**Novation Launchpad**](https://novationmusic.com/launchpad) into a macOS shortcut deck with **real-time LED
+feedback**.  
 Assign buttons to apps and control them instantly (launch, focus, minimize, or close windows) with LEDs that always
 stay in sync with your system.
 
@@ -103,6 +104,20 @@ pnpm start
 
 > The app will check if Hammerspoon is running and attempt to launch it if not found.
 > On the first run, you may need to grant Accessibility permissions to Hammerspoon when prompted by macOS.
+
+### 🧪 Manual app-control test
+
+You can verify macOS application control via Hammerspoon by running:
+
+```bash
+pnpm test:hammerspoon
+```
+
+This command will open, focus, minimize, maximize, fullscreen, and close each app listed in the `APPS` constant inside
+`tests/hammerspoon-integration.test.js`.  
+You can edit that array to select which apps to test.
+
+> ⚠️ **Warning:** Running this test will actively open and close apps on your machine.
 
 ### ❗ Troubleshooting
 
