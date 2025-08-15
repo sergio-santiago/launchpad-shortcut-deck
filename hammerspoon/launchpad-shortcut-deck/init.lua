@@ -1,214 +1,300 @@
 -- ~/.hammerspoon/launchpad-shortcut-deck/init.lua
+-- Fast & robust Lua API to control macOS apps from Node (via osascript).
+-- All public functions return the strings "ok" or "err" for predictable IPC.
+-- NOTE: Window operations require Accessibility permission:
+--       System Settings → Privacy & Security → Accessibility → enable "Hammerspoon".
 
--- Requires Accessibility permission for window operations (System Settings → Privacy & Security → Accessibility).
+hs.allowAppleScript(true) -- allow `execute lua code` from osascript
 
--- Generic Lua API for application/window control from Node via AppleScript.
--- All public functions return the string "ok" or "err" to keep IPC predictable.
--- NOTE: For window manipulation (minimize/maximize/fullscreen/close), Hammerspoon
---       may need Accessibility permission in macOS Privacy & Security.
+----------------------------------------------------------------------
+-- Tunables (snappy yet reliable)
+-- The goal is low perceived latency while being tolerant to slow apps.
+----------------------------------------------------------------------
+local LAUNCH_TRIES   = 20      -- attempts to resolve app after launch
+local LAUNCH_SLEEPUS = 100000  -- 100 ms between attempts (~2.0 s total)
 
--- Allow AppleScript (osascript) to run Lua code inside Hammerspoon.
-hs.allowAppleScript(true)
+local WIN_TRIES      = 10      -- attempts to obtain a usable window
+local WIN_SLEEPUS    = 80000   -- 80 ms between attempts (~0.8 s total)
 
--- ===== Generic Helpers =====
+local UNMIN_DELAYUS  = 90000   -- short pause after unminimize (90 ms)
 
--- parseTarget:
--- Accepts either a plain app name (e.g. "Safari") or a bundle-qualified target
--- (e.g. "bundle:com.microsoft.VSCode"). Returns a { kind, value } table.
+----------------------------------------------------------------------
+-- Local refs (avoid global lookups in hot paths)
+----------------------------------------------------------------------
+local appmod    = hs.application
+local appfinder = hs.appfinder
+local json      = hs.json
+local osa       = hs.osascript.applescript
+local usleep    = hs.timer.usleep
+local keystroke = hs.eventtap.keyStroke
+
+----------------------------------------------------------------------
+-- Helpers
+----------------------------------------------------------------------
+
+--- Parse a target string into either {kind="bundle", value="<id>"} or {kind="name", value="<name>"}.
+--- Accepts "Safari" or "bundle:com.apple.Safari".
 local function parseTarget(s)
-  -- Supported formats:
-  --   "Safari"                       (by name)
-  --   "bundle:com.microsoft.VSCode"  (by bundle id)
   if type(s) ~= "string" then return { kind = "name", value = "" } end
   local bid = s:match("^bundle:(.+)$")
   if bid and #bid > 0 then return { kind = "bundle", value = bid } end
   return { kind = "name", value = s }
 end
 
--- getAppByBundle:
--- Returns an hs.application instance for a given bundle id, if any is running.
+--- Return an hs.application instance for a bundle id (first match) or nil.
 local function getAppByBundle(bid)
-  local apps = hs.application.applicationsForBundleID(bid) or {}
+  local apps = appmod.applicationsForBundleID(bid) or {}
   if #apps > 0 then return apps[1] end
   return nil
 end
 
--- getAppByName:
--- Attempts to resolve an app by display name.
+--- Try by human name (fast path), then appfinder (slower).
 local function getAppByName(name)
-  return hs.application.get(name) or hs.appfinder.appFromName(name)
+  return appmod.get(name) or appfinder.appFromName(name)
 end
 
--- resolveApp:
--- Resolves an app handle from a parsed target (by bundle or by name).
+--- Resolve an app from a parsed target.
 local function resolveApp(target)
-  if target.kind == "bundle" then
-    return getAppByBundle(target.value)
-  else
-    return getAppByName(target.value)
-  end
+  if target.kind == "bundle" then return getAppByBundle(target.value) end
+  return getAppByName(target.value)
 end
 
--- launchOrFocus:
--- Launches or focuses an app given a parsed target. Uses bundle-aware launcher
--- when provided for better reliability.
+--- Bring app to front, preferring bundle id when available.
 local function launchOrFocus(target)
   if target.kind == "bundle" then
-    hs.application.launchOrFocusByBundleID(target.value)
+    appmod.launchOrFocusByBundleID(target.value)
   else
-    hs.application.launchOrFocus(target.value)
+    appmod.launchOrFocus(target.value)
   end
 end
 
--- ensureApp:
--- Best-effort to make sure an app is launched and resolvable, retrying briefly.
--- Returns an hs.application instance or nil.
-local function ensureApp(target, tries, delayUs)
-  tries   = tries   or 12
-  delayUs = delayUs or 120000 -- 0.12s between attempts
+--- Ensure the app is running and resolvable.
+--- Strategy:
+---   1) launchOrFocus
+---   2) brief retries to obtain a handle
+---   3) stubborn fallback: AppleScript `launch` by id/name, then retry
+local function ensureApp(target, tries, sleepUs)
+  tries   = tries   or LAUNCH_TRIES
+  sleepUs = sleepUs or LAUNCH_SLEEPUS
 
   launchOrFocus(target)
   for _ = 1, tries do
     local app = resolveApp(target)
     if app then return app end
-    hs.timer.usleep(delayUs)
+    usleep(sleepUs)
+  end
+
+  -- Fallback: explicit AppleScript launch (some apps are stubborn)
+  local as = (target.kind == "bundle")
+      and ('tell application id "'..target.value..'" to launch')
+       or ('tell application "' ..target.value..'" to launch')
+  osa(as)
+
+  for _ = 1, 5 do
+    local app = resolveApp(target)
+    if app then return app end
+    usleep(sleepUs)
   end
   return nil
 end
 
--- waitWindow:
--- Attempts to obtain a usable window for an app, with a few niceties:
---  - un-minimizes any minimized windows,
---  - activates the app,
---  - retries briefly for a focused/main window to appear.
--- Returns an hs.window or nil.
-local function waitWindow(app, tries, delayUs)
-  tries   = tries   or 12
-  delayUs = delayUs or 120000 -- 0.12s
+--- Try to obtain a usable window (focused/main), making the app visible if needed.
+--- Steps:
+---   - unhide app (safe if already visible)
+---   - unminimize any minimized windows (common after clicking the red button)
+---   - activate app and poll for a focused/main window with a short retry loop
+---   - at mid-loop, nudge again by bundle id (helps some apps surface a window)
+local function waitWindow(app, tries, sleepUs)
+  tries   = tries   or WIN_TRIES
+  sleepUs = sleepUs or WIN_SLEEPUS
 
-  -- Un-minimize any minimized windows so we have something to act on.
+  -- Unhide (no-op if already visible)
+  pcall(function() app:unhide() end)
+
+  -- Unminimize all windows so we have something to act on
   local wins = app.allWindows and app:allWindows() or {}
   local restored = false
   for _, w in ipairs(wins) do
     if w:isMinimized() then w:unminimize(); restored = true end
   end
-  if restored then hs.timer.usleep(150000) end
+  if restored then usleep(UNMIN_DELAYUS) end
 
-  -- Bring the app to front and wait for a usable window.
+  -- Bring to front before polling
   app:activate(true)
-  for _ = 1, tries do
-    local w = app.focusedWindow and (app:focusedWindow() or app:mainWindow()) or nil
+
+  for i = 1, tries do
+    local w = (app.focusedWindow and app:focusedWindow()) or (app.mainWindow and app:mainWindow()) or nil
     if w then return w end
-    hs.timer.usleep(delayUs)
+
+    -- Midway nudge can help stubborn apps produce a main window
+    if i == math.floor(tries / 2) then
+      pcall(function()
+        local bid = app:bundleID()
+        if bid and #bid > 0 then appmod.launchOrFocusByBundleID(bid) end
+      end)
+    end
+
+    usleep(sleepUs)
   end
   return nil
 end
 
--- ===== Public API (string-return) =====
+-- Keystroke fallbacks / reopen (used when direct window ops fail)
+local function tryCmdM(app) keystroke({ "cmd" }, "m", 0, app) end
+local function tryCmdN(app) keystroke({ "cmd" }, "n", 0, app) end
+local function tryReopen(target)
+  local as = (target.kind == "bundle")
+      and ('tell application id "'..target.value..'" to reopen')
+       or ('tell application "' ..target.value..'" to reopen')
+  osa(as)
+end
 
--- launchpad_shortcut_deck_open:
--- Launch or focus the target application. Does not guarantee a new window.
+----------------------------------------------------------------------
+-- Public API (return "ok"/"err")
+----------------------------------------------------------------------
+
+--- Launch or focus the target application (does not guarantee a new window).
 function launchpad_shortcut_deck_open(s)
-  local t = parseTarget(s)
-  launchOrFocus(t)
+  launchOrFocus(parseTarget(s))
   return "ok"
 end
 
--- launchpad_shortcut_deck_focus:
--- Bring the app to the front. Launches first if needed.
+--- Bring app to front. If minimized/hidden, restore it.
+--- If no windows exist, attempt reopen; if that fails, create a new one (Cmd+N).
+--- As a last resort, explicitly `activate` via AppleScript.
 function launchpad_shortcut_deck_focus(s)
   local t = parseTarget(s)
   local app = resolveApp(t) or ensureApp(t)
   if not app then return "err" end
+
+  pcall(function() app:unhide() end)
   app:activate(true)
+
+  local w = waitWindow(app)
+  if w then app:activate(true); return "ok" end
+
+  -- No windows → try "reopen", then check again
+  tryReopen(t)
+  usleep(150000)
+  w = (app.focusedWindow and app:focusedWindow()) or (app.mainWindow and app:mainWindow()) or nil
+  if w then app:activate(true); return "ok" end
+
+  -- Last resort: force a fresh window (Cmd+N)
+  tryCmdN(app)
+  usleep(150000)
+  w = (app.focusedWindow and app:focusedWindow()) or (app.mainWindow and app:mainWindow()) or nil
+  if w then app:activate(true); return "ok" end
+
+  -- Some apps only obey explicit AppleScript activation
+  local as = (t.kind == "bundle")
+      and ('tell application id "'..t.value..'" to activate')
+       or ('tell application "' ..t.value..'" to activate')
+  osa(as)
   return "ok"
 end
 
--- launchpad_shortcut_deck_close:
--- Close all windows of the app but keep the process running (do NOT quit).
+--- Close all standard windows, but keep the process alive (do NOT quit).
 function launchpad_shortcut_deck_close(s)
   local t = parseTarget(s)
   local app = resolveApp(t) or ensureApp(t)
   if not app then return "err" end
 
-  -- Get all windows (may be empty if the app has no UI yet)
   local wins = app.allWindows and app:allWindows() or {}
-
-  -- If there are minimized windows, unminimize so close() can act on them
   local hadMinimized = false
   for _, w in ipairs(wins) do
     if w:isMinimized() then w:unminimize(); hadMinimized = true end
   end
-  if hadMinimized then hs.timer.usleep(120000) end -- short pause
+  if hadMinimized then usleep(UNMIN_DELAYUS) end
 
-  -- Close all standard windows
   local closedAny = false
   for _, w in ipairs(app:allWindows() or {}) do
-    -- In most apps close() is enough; filter out non-standard windows for safety
+    -- Favor standard windows; if we cannot query isStandard(), err on closing
     local ok, isStd = pcall(function() return w:isStandard() end)
-    if not ok or isStd then
-      w:close()
-      closedAny = true
-    end
+    if (not ok) or isStd then w:close(); closedAny = true end
   end
 
-  -- If there were no windows, consider "ok" (process remains in memory)
-  if #wins == 0 or closedAny then return "ok" end
+  if (#wins == 0) or closedAny then return "ok" end
   return "err"
 end
 
--- launchpad_shortcut_deck_quit:
--- Attempt to quit the app. Uses :kill() when possible; otherwise falls back
--- to AppleScript (by name or by bundle id).
+--- Quit the application. Prefer app:kill(), fallback to AppleScript `quit`.
 function launchpad_shortcut_deck_quit(s)
   local t = parseTarget(s)
-  local app = resolveApp(t) or ensureApp(t, 6, 100000)
-  if app and app.kill then
-    app:kill()
-    return "ok"
-  end
-  -- Generic AppleScript fallback
-  local nameOrBid = t.value
-  local as
-  if t.kind == "bundle" then
-    -- AppleScript quits by app id (bundle id) using 'application id "<BUNDLE>"'
-    as = 'tell application id "'..nameOrBid..'" to quit'
-  else
-    as = 'tell application "'..nameOrBid..'" to quit'
-  end
-  local okAS = hs.osascript.applescript(as)
+  local app = resolveApp(t) or ensureApp(t)
+  if app and app.kill then app:kill(); return "ok" end
+  local as = (t.kind == "bundle")
+      and ('tell application id "'..t.value..'" to quit')
+       or ('tell application "' ..t.value..'" to quit')
+  local okAS = osa(as)
   return okAS and "ok" or "err"
 end
 
--- launchpad_shortcut_deck_minimize:
--- Minimize the app’s primary window if available.
+--- Minimize the primary window; fallback to Cmd+M if direct call fails.
 function launchpad_shortcut_deck_minimize(s)
   local t = parseTarget(s)
   local app = resolveApp(t) or ensureApp(t)
   if not app then return "err" end
+
   local w = waitWindow(app)
-  if w then w:minimize(); return "ok" end
-  return "err"
+  if w then
+    local ok = pcall(function() w:minimize() end)
+    if ok then return "ok" end
+  end
+  tryCmdM(app)
+  return "ok"
 end
 
--- launchpad_shortcut_deck_maximize:
--- Maximize the app’s primary window if available.
+--- Maximize the primary window. Returns "err" if none can be found.
 function launchpad_shortcut_deck_maximize(s)
   local t = parseTarget(s)
   local app = resolveApp(t) or ensureApp(t)
   if not app then return "err" end
+
   local w = waitWindow(app)
   if w then w:maximize(); return "ok" end
   return "err"
 end
 
--- launchpad_shortcut_deck_fullscreen:
--- Toggle fullscreen for the app’s primary window (true to enable, false to exit).
+--- Toggle fullscreen for the primary window (true to enable, false to exit).
 function launchpad_shortcut_deck_fullscreen(s, val)
   local t = parseTarget(s)
   local app = resolveApp(t) or ensureApp(t)
   if not app then return "err" end
+
   local w = waitWindow(app)
   if w then w:setFullScreen(val ~= false); return "ok" end
   return "err"
+end
+
+--- Return a JSON array with minimal per-app state for multiple targets.
+--- Shape: [{target, running, focused?, windowCount?, minimizedCount?, visibleCount?, allMinimized?, hasVisibleWindows?}, ...]
+--- Cost: one pass over each app's window list; designed to be fast for periodic polling.
+function launchpad_shortcut_deck_getStatesBulk(targets)
+  if type(targets) ~= "table" then return "[]" end
+  local results = {}
+
+  for _, s in ipairs(targets) do
+    local target = parseTarget(s)
+    local app = resolveApp(target)
+    if not app then
+      results[#results+1] = { target = s, running = false }
+    else
+      local wins = app:allWindows() or {}
+      local visCount, minCount, total = 0, 0, #wins
+      for _, w in ipairs(wins) do
+        if w:isVisible()   then visCount = visCount + 1 end
+        if w:isMinimized() then minCount = minCount + 1 end
+      end
+      local focused    = app:isFrontmost()
+      local hasVisible = (visCount > 0)
+      local allMin     = (total > 0 and minCount == total)
+      results[#results+1] = {
+        target = s, running = true, focused = focused,
+        hasVisibleWindows = hasVisible, allMinimized = allMin,
+        windowCount = total, visibleCount = visCount, minimizedCount = minCount
+      }
+    end
+  end
+
+  return json.encode(results)
 end
