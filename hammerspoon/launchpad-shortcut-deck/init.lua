@@ -193,27 +193,34 @@ function launchpad_shortcut_deck_focus(s)
   return "ok"
 end
 
---- Close all standard windows, but keep the process alive (do NOT quit).
+--- Close all standard windows without visually restoring minimized ones.
+--- Behavior:
+---   - Attempt to close each window directly, even if minimized (no unminimize "pop").
+---   - If a window refuses to close while minimized, unminimize *that window only*
+---     as a fallback and close it, avoiding a global unminimize sweep.
 function launchpad_shortcut_deck_close(s)
   local t = parseTarget(s)
   local app = resolveApp(t) or ensureApp(t)
   if not app then return "err" end
 
   local wins = app.allWindows and app:allWindows() or {}
-  local hadMinimized = false
-  for _, w in ipairs(wins) do
-    if w:isMinimized() then w:unminimize(); hadMinimized = true end
-  end
-  if hadMinimized then usleep(UNMIN_DELAYUS) end
+  if #wins == 0 then return "ok" end
 
   local closedAny = false
-  for _, w in ipairs(app:allWindows() or {}) do
-    -- Favor standard windows; if we cannot query isStandard(), err on closing
-    local ok, isStd = pcall(function() return w:isStandard() end)
-    if (not ok) or isStd then w:close(); closedAny = true end
+  for _, w in ipairs(wins) do
+    -- Prefer closing in-place
+    local okClose = pcall(function() w:close() end)
+    if not okClose then
+      -- Fallback: if minimized (or state unknown), try unminimize just this window and close again
+      local isMin = false
+      pcall(function() isMin = w:isMinimized() end)
+      if isMin then pcall(function() w:unminimize() end); usleep(UNMIN_DELAYUS // 2) end
+      okClose = pcall(function() w:close() end)
+    end
+    if okClose then closedAny = true end
   end
 
-  if (#wins == 0) or closedAny then return "ok" end
+  if closedAny then return "ok" end
   return "err"
 end
 

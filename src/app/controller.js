@@ -68,7 +68,14 @@ export class AppController {
      *     launch: (target:string) => Promise<string>,
      *     focus: (target:string) => Promise<string>,
      *     minimizeAll: (target:string) => Promise<string>,
-     *     closeAll: (target:string) => Promise<string>
+     *     closeAll: (target:string) => Promise<string>,
+     *     // Optional optimized variants:
+     *     closeAllFast?: (target:string) => Promise<string>,
+     *     getState?: (target:string) => Promise<{
+     *       target:string, running:boolean, focused?:boolean,
+     *       windowCount?:number, minimizedCount?:number, visibleCount?:number,
+     *       allMinimized?:boolean, hasVisibleWindows?:boolean
+     *     }>
      *   },
      *   lpPort: {
      *     setPad: (id:number, color:[number,number]) => void,
@@ -78,7 +85,7 @@ export class AppController {
      * }} deps
      */
     constructor({appService, lpPort, appMappings}) {
-        this.app = appService; // { launch, focus, minimizeAll, closeAll }
+        this.app = appService;
         this.lp = lpPort;
         this.map = appMappings;
 
@@ -166,6 +173,11 @@ export class AppController {
     /**
      * Long‑press handler → closes all windows (keep the process running).
      * Shows a short red blink first, then updates LED to “stopped.”
+     *
+     * Optimization:
+     * - If the app is running and fully minimized (no visible windows),
+     *   prefer a fast-close path that does not unminimize windows first
+     *   (integration method `closeAllFast`, when available).
      */
     async onLongPress(padId) {
         const target = this.targetFor(padId);
@@ -180,7 +192,21 @@ export class AppController {
             logger.info('[CTL] close-all (long-press)', {padId, target: label});
             await blinkQuit(this.lp, padId, LedStateColors[LedState.QUITTING], DUR.quitBlinkMs);
 
-            const r = await this.app.closeAll(hsTarget);
+            // Check the current state to decide the best close strategy.
+            let minimizedOnly = false;
+            try {
+                const st = await this.app.getState?.(hsTarget);
+                minimizedOnly = !!(st && st.running && (st.allMinimized || st.visibleCount === 0));
+            } catch {
+                // Ignore state errors; we'll fall back to the regular path.
+            }
+
+            const closeFn =
+                (minimizedOnly && typeof this.app.closeAllFast === 'function')
+                    ? this.app.closeAllFast.bind(this.app)
+                    : this.app.closeAll.bind(this.app);
+
+            const r = await closeFn(hsTarget);
             if (r !== 'ok') throw new Error(`closeAll failed: ${r}`);
 
             // Assigned but currently stopped/hidden.
