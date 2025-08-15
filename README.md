@@ -14,6 +14,8 @@ stay in sync with your system.
 - Each button can be mapped to a macOS application.
 - Actions trigger with minimal latency and always stay in sync with the system’s actual state.
 - LED colors indicate the app's current state in real time.
+- Includes customizable boot and shutdown LED animations for clear visual cues.
+- Optimized bulk LED state sync loop for sub-200 ms refresh rate and low CPU usage.
 
 For detailed LED behavior and interaction rules, see [**Technical Specification**](docs/spec.md).
 
@@ -27,7 +29,8 @@ For detailed LED behavior and interaction rules, see [**Technical Specification*
 - [pnpm](https://pnpm.io/) as the package manager.
 - A [**Novation Launchpad**](https://novationmusic.com/launchpad) connected via USB.  
   *Developed and tested with a Launchpad S model.*
-- [**Hammerspoon**](https://www.hammerspoon.org) — required for macOS app control (see [setup below](#-hammerspoon-setup-required-for-macos-app-control)).
+- [**Hammerspoon**](https://www.hammerspoon.org) — required for macOS app control
+  (see [setup below](#-hammerspoon-setup-required-for-macos-app-control)).
 
 ---
 
@@ -103,7 +106,9 @@ pnpm start
 ```
 
 > The app will check if Hammerspoon is running and attempt to launch it if not found.
-> On the first run, you may need to grant Accessibility permissions to Hammerspoon when prompted by macOS.
+> On the first run, you may need to grant Accessibility permissions to Hammerspoon when prompted by macOS.  
+> You can quit at any time by pressing `ESC` or `Ctrl+C`.  
+> On exit, a shutdown animation will play and all LEDs will be cleared.
 
 ### 🧪 Manual app-control test
 
@@ -117,7 +122,8 @@ This command will open, focus, minimize, maximize, toggle fullscreen,
 close all windows while keeping the app running, re-open a window,
 and finally quit each app listed in the `APPS` constant inside
 `tests/hammerspoon-integration.test.js`.  
-You can edit that array to select which apps to test.
+You can edit that array to select which apps to test.  
+This test now also checks live application state via `getState` to verify actions were applied successfully.
 
 > ⚠️ **Warning:** Running this test will actively open and close apps on your machine.
 
