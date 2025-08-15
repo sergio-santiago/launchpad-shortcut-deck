@@ -1,2 +1,164 @@
-console.log("🎛 Launchpad Shortcut Deck");
-console.log("This is a placeholder entry point. Implementation coming soon...");
+/**
+ * Application entry point for the Launchpad Shortcut Deck.
+ *
+ * Responsibilities
+ * - Initialize the MIDI adapter and start a clean LED baseline.
+ * - Preflight Hammerspoon so the Lua bridge is callable.
+ * - Play a short boot animation (non‑blocking to app startup).
+ * - Wire controller (gestures → actions) and periodic LED state sync.
+ * - Provide a robust, idempotent shutdown path (signals & keypress).
+ *
+ * Design goals
+ * - Very low action latency (press → action).
+ * - Low CPU (bulk polling; no overlapping sync ticks).
+ * - Safe visuals (avoid stomping ongoing animations).
+ * - Clean resource teardown (LEDs cleared before closing MIDI).
+ */
+
+import readline from 'node:readline';
+import {getDefaultLaunchpadPorts, LaunchpadJulusian} from './launchpad/adapters/launchpad-julusian.js';
+import {createAppController, setPokeSync} from './app/controller.js';
+import {startStateSync} from './app/state-sync.js';
+import {APP_MAPPINGS} from './config/app-mappings.js';
+import {ensureReady} from './integrations/hammerspoon/index.js';
+import {logger} from './utils/logger.js';
+import {playBootAnimation} from './launchpad/boot-animation.js';
+import {playShutdownAnimation} from './launchpad/shutdown-animations.js';
+
+async function main() {
+    logger.info('[BOOT] starting');
+
+    // 1) Preflight Hammerspoon in parallel with MIDI setup.
+    //    This saves time because Hammerspoon can finish loading while we open ports.
+    const preflight = ensureReady();
+
+    // 2) Open Launchpad ports and hard‑clear LEDs for a deterministic baseline.
+    const {inIdx, outIdx} = getDefaultLaunchpadPorts();
+    logger.info('[MIDI] opening ports', {inIdx, outIdx});
+
+    const lp = new LaunchpadJulusian({inIdx, outIdx});
+    if (lp.open) await lp.open();
+    if (lp.init) await lp.init();
+    await lp.clearAll();
+    logger.debug('[MIDI] ports ready & LEDs cleared');
+
+    // 3) Wait until the Hammerspoon Lua API is callable.
+    await preflight;
+    logger.info('[HS] preflight OK');
+
+    // 4) Startup animation.
+    //    Let the animation use its own tuned defaults (fast and low‑CPU).
+    //    Any error here is non‑fatal; visuals should not block boot.
+    try {
+        await playBootAnimation(lp, APP_MAPPINGS, {
+            // useAllPads defaults to true; keep it explicit for clarity.
+            useAllPads: true,
+            // Do not override timing here; boot-animation has tuned defaults.
+        });
+    } catch (e) {
+        logger.warn('[BOOT] startup animation skipped', {err: String(e)});
+    }
+
+    // 5) Controller (gestures → Hammerspoon actions) and periodic LED sync.
+    const ctl = createAppController({lpPort: lp, appMappings: APP_MAPPINGS});
+    const appService = ctl.app;
+
+    // Bulk state sync interval: 100–200 ms recommended; 140 ms balances CPU & responsiveness.
+    const intervalMs = 140;
+    const syncCtl = startStateSync({appService, lpPort: lp, appMappings: APP_MAPPINGS, intervalMs});
+
+    // Optional “poke” allows the controller to request a quicker re‑paint after actions.
+    if (syncCtl?.poke) setPokeSync(syncCtl.poke);
+    logger.info('[SYNC] started', {intervalMs});
+
+    // Initial nudge so mapped pads settle immediately (e.g., dim background).
+    if (syncCtl?.poke) {
+        let count = 0;
+        for (const k of Object.keys(APP_MAPPINGS)) {
+            const id = Number(k);
+            if (Number.isFinite(id)) {
+                syncCtl.poke(id);
+                count++;
+            }
+        }
+        logger.debug('[SYNC] initial pokes', {pads: count});
+    }
+
+    // ────────────────────────── Controlled shutdown ──────────────────────────
+    let quitting = false;
+
+    // If we enable raw TTY mode for keypress handling, make sure we restore it.
+    const restoreTTY = () => {
+        try {
+            if (process.stdin.isTTY) process.stdin.setRawMode(false);
+        } catch {
+        }
+    };
+
+    async function shutdown(reason = 'signal') {
+        if (quitting) return;
+        quitting = true;
+        logger.warn('[SHUTDOWN] begin', {reason});
+
+        try {
+            syncCtl?.stop?.();
+        } catch {
+        }
+
+        // Short “goodbye” sweep on mapped pads. Any error is ignored.
+        try {
+            const mappedPads = Object.keys(APP_MAPPINGS).map(Number).filter(Number.isFinite);
+            await playShutdownAnimation(lp, mappedPads, {
+                // Let the animation use its tuned fast defaults; only pass pads.
+                // totalDurationMs, passes, trail can be customized if desired.
+            });
+        } catch {
+        }
+
+        // Clear LEDs BEFORE closing MIDI ports; await so messages are flushed.
+        try {
+            await lp?.clearAll?.();
+        } catch {
+        }
+        try {
+            lp?.close?.();
+        } catch {
+        }
+        restoreTTY();
+
+        logger.info('[SHUTDOWN] done → exit 0');
+        process.exit(0);
+    }
+
+    // ESC to quit; also catch Ctrl+C when in raw keypress mode.
+    readline.emitKeypressEvents(process.stdin);
+    if (process.stdin.isTTY) {
+        process.stdin.setRawMode(true);
+        process.stdin.on('keypress', (_str, key) => {
+            if (key?.name === 'escape') shutdown('ESC');
+            else if (key?.ctrl && key?.name === 'c') shutdown('SIGINT-keypress');
+        });
+    }
+
+    // OS signals → graceful shutdown.
+    process.once('SIGINT', () => shutdown('SIGINT'));
+    process.once('SIGTERM', () => shutdown('SIGTERM'));
+    process.once('SIGHUP', () => shutdown('SIGHUP'));
+
+    // Fail‑safe: close cleanly on unexpected errors.
+    process.once('unhandledRejection', (e) => {
+        logger.error('[ERR] unhandledRejection', e);
+        shutdown('unhandledRejection');
+    });
+    process.once('uncaughtException', (e) => {
+        logger.error('[ERR] uncaughtException', e);
+        shutdown('uncaughtException');
+    });
+
+    logger.info('[BOOT] ready');
+}
+
+main().catch((e) => {
+    logger.error('[FATAL] boot failed', e);
+    process.exit(1);
+});
