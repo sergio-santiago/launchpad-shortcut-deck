@@ -7,7 +7,8 @@
   "main": "src/main.js",
   "scripts": {
     "prestart": "node hammerspoon/ensure-hs.js",
-    "start": "node .",
+    "start": "LOG_LEVEL=info node .",
+    "start:debug": "LOG_LEVEL=debug node .",
     "test:hammerspoon": "node tests/hammerspoon-integration.test.js"
   },
   "keywords": [

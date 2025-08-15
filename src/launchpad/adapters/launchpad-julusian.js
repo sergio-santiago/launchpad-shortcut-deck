@@ -161,7 +161,7 @@ export class LaunchpadJulusian extends LaunchpadPort {
 
             try {
                 if (down) {
-                    if (this.logPressedNotes) logger.debug('[MIDI] note down', {note: data1});
+                    if (this.logPressedNotes) logger.info('[MIDI] note down', {note: data1});
                     this._onDown && this._onDown(data1);
                 } else if (up) {
                     this._onUp && this._onUp(data1);
