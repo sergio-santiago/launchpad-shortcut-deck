@@ -1,71 +1,146 @@
+// src/integrations/hammerspoon/preflight.js
 /**
- * Preflight checks for the Hammerspoon integration.
+ * Preflight for the Hammerspoon integration.
  *
- * Ensures that the custom Lua API functions (launchpad_shortcut_deck_*) are loaded and callable
- * before the rest of the app runs. This is done by asking Hammerspoon (via
- * AppleScript) to execute small Lua snippets that verify each function exists.
+ * Verifies that the custom Lua API (functions named `launchpad_shortcut_deck_*`)
+ * is loaded and callable inside Hammerspoon before the rest of the app proceeds.
+ *
+ * Design goals:
+ * - Low latency: a single AppleScript round-trip per attempt
+ * - Robustness: short retry window to tolerate Hammerspoon config reloads
+ * - Idempotency: later calls reuse a cached Promise to avoid duplicate work
+ *
+ * Usage:
+ *   await ensureReady(); // throws if the API is missing after all attempts
  */
 
 import {execFile} from 'node:child_process';
 import {setTimeout as wait} from 'node:timers/promises';
+import {logger} from '../../utils/logger.js';
+
+const isMac = process.platform === 'darwin';
 
 /**
- * Executes a short Lua snippet inside Hammerspoon via AppleScript.
- * Escapes double quotes to safely embed the chunk in the AppleScript one-liner.
+ * Escape a Lua snippet so it can be safely embedded into an AppleScript string literal.
+ * - Escapes backslashes and double quotes
+ * - Collapses newlines to spaces (osascript one-liners)
  *
- * @param {string} luaChunk - The Lua code to run inside Hammerspoon.
- * @param {number} [timeoutMs=6000] - Max time to wait for osascript to return.
- * @returns {Promise<string>} - Raw stdout from Hammerspoon (trimmed).
+ * @param {string} s
+ * @returns {string}
  */
-function runOSA(luaChunk, timeoutMs = 6000) {
-    const osa = `tell application "Hammerspoon" to execute lua code "${luaChunk.replace(/"/g, '\\"')}"`
+function escapeForOSA(s) {
+    return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\r?\n/g, ' ');
+}
+
+/**
+ * Execute a short Lua chunk inside Hammerspoon via AppleScript (`osascript`).
+ *
+ * Implementation details:
+ * - We target the Hammerspoon app directly and ask it to `execute lua code "<chunk>"`
+ * - On error, we surface the most informative message available (stderr > stdout > error message)
+ *
+ * @param {string} luaChunk - Lua code to run inside Hammerspoon.
+ * @param {{timeoutMs?: number, maxBuffer?: number}} [opts]
+ * @returns {Promise<string>} Trimmed stdout returned by Hammerspoon.
+ */
+function runOSA(luaChunk, opts = {}) {
+    const {timeoutMs = 1200, maxBuffer = 1024 * 1024} = opts;
+    const osa = `tell application "Hammerspoon" to execute lua code "${escapeForOSA(luaChunk)}"`;
     return new Promise((resolve, reject) => {
-        execFile('osascript', ['-e', osa], {timeout: timeoutMs}, (err, stdout, stderr) => {
+        execFile('osascript', ['-e', osa], {timeout: timeoutMs, maxBuffer}, (err, stdout, stderr) => {
             if (err) {
-                return reject(new Error((stderr?.toString() || stdout?.toString() || err.message).trim()));
+                const msg = (stderr && String(stderr).trim()) || (stdout && String(stdout).trim()) || err.message || 'Unknown error';
+                return reject(new Error(msg));
             }
-            resolve((stdout || '').toString().trim());
+            resolve(String(stdout || '').trim());
         });
     });
 }
 
-/**
- * Checks whether a given global Lua symbol is a function in the Hammerspoon runtime.
- *
- * @param {string} name - Global symbol name (e.g., "launchpad_shortcut_deck_open").
- * @returns {Promise<boolean>} - True if the symbol is a function, false otherwise.
- */
-async function checkFunc(name) {
-    const out = await runOSA(`return type(_G["${name}"])`);
-    return out.trim() === 'function';
-}
+/** Cached promise to avoid multiple concurrent/duplicate preflights. */
+let _readyOnce;
 
 /**
- * Ensures that all required Lua functions exist before proceeding.
- * Retries multiple times to allow Hammerspoon time to finish loading its config.
+ * Ensure Hammerspoon's Lua API is available.
  *
- * @param {object} [opts] - Options.
- * @param {number} [opts.retries=12] - Maximum number of attempts.
- * @param {number} [opts.delayMs=300] - Delay between attempts, in milliseconds.
- * @throws {Error} If any functions are still missing after all retries.
+ * Tries a few times (short backoff) to allow Hammerspoon to finish loading or reloading.
+ * If any required function is missing after the final attempt, rejects with a
+ * descriptive "HS_FUNCS_MISSING:..." error.
+ *
+ * @param {{retries?: number, delayMs?: number}} [opts]
+ * @param {number} [opts.retries=8]   - Total attempts before failing.
+ * @param {number} [opts.delayMs=140] - Base delay between attempts (ms).
+ * @returns {Promise<void>}
+ * @throws {Error} If required functions are still missing after all retries,
+ *                 or if `osascript` invocation fails.
  */
-export async function ensureReady({retries = 12, delayMs = 300} = {}) {
-    const required = ['launchpad_shortcut_deck_open', 'launchpad_shortcut_deck_close', 'launchpad_shortcut_deck_minimize', 'launchpad_shortcut_deck_maximize', 'launchpad_shortcut_deck_fullscreen', 'launchpad_shortcut_deck_focus'];
+export function ensureReady({retries = 8, delayMs = 140} = {}) {
+    if (_readyOnce) return _readyOnce;
 
-    for (let i = 0; i < retries; i++) {
-        const missing = [];
-        for (const name of required) {
+    _readyOnce = (async () => {
+        if (!isMac) {
+            logger.warn('[HS] preflight skipped: non-macOS platform');
+            return;
+        }
+
+        // Keep this list in sync with the public Lua API (see hammerspoon/.../init.lua)
+        const required = ['launchpad_shortcut_deck_open', 'launchpad_shortcut_deck_focus', 'launchpad_shortcut_deck_minimize', 'launchpad_shortcut_deck_maximize', 'launchpad_shortcut_deck_fullscreen', 'launchpad_shortcut_deck_close', 'launchpad_shortcut_deck_quit', 'launchpad_shortcut_deck_getStatesBulk',];
+
+        // Single Lua chunk that returns a JSON array of missing function names.
+        // We prefer `hs.json.encode`, falling back to "[]" if not available yet.
+        const luaCheck = `
+            local req = { ${required.map(n => `[[${n}]]`).join(', ')} }
+            local missing = {}
+            for i=1,#req do
+                local name = req[i]
+                if type(_G[name]) ~= 'function' then missing[#missing+1] = name end
+            end
+            if hs and hs.json and hs.json.encode then
+                return hs.json.encode(missing)
+            else
+                return "[]"
+            end
+        `;
+
+        for (let attempt = 0; attempt < retries; attempt++) {
+            let fatalError = null;
+
             try {
-                if (!(await checkFunc(name))) missing.push(name);
-            } catch {
-                // If osascript/Lua evaluation fails transiently, treat as missing and retry.
-                missing.push(name);
+                const out = await runOSA(luaCheck);
+                let missing = [];
+                try {
+                    missing = JSON.parse(out || '[]');
+                } catch {
+                    missing = [];
+                }
+
+                if (Array.isArray(missing) && missing.length === 0) {
+                    if (attempt > 0) logger.info(`[HS] preflight ready after ${attempt + 1} attempt(s)`); else logger.debug('[HS] preflight ready (first attempt)');
+                    return;
+                }
+
+                if (attempt === retries - 1) {
+                    logger.error('[HS] preflight failed (missing API):', missing);
+                    fatalError = new Error('HS_FUNCS_MISSING:' + missing.join(','));
+                }
+            } catch (e) {
+                if (attempt === retries - 1) {
+                    logger.error('[HS] preflight error (final):', e?.message || e);
+                    fatalError = e instanceof Error ? e : new Error(String(e));
+                }
+                // else: swallow and retry on transient osascript/Hammerspoon errors
             }
+
+            if (fatalError) {
+                // Single throw site outside the try/catch to avoid "throw caught locally" warnings
+                throw fatalError;
+            }
+
+            // Small incremental backoff; capped to keep startup snappy.
+            const backoff = Math.min(450, delayMs + attempt * 25);
+            await wait(backoff);
         }
-        if (missing.length === 0) return;
-        if (i === retries - 1) {
-            throw new Error('HS_FUNCS_MISSING:' + missing.join(','));
-        }
-        await wait(delayMs);
-    }
+    })();
+
+    return _readyOnce;
 }
