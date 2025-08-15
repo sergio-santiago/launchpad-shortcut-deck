@@ -27,6 +27,7 @@ import {blinkQuit} from '../launchpad/led-animator.js';
 import {logger} from '../utils/logger.js';
 import {markBusy} from '../utils/busy-registry.js';
 import {getIntegration} from '../integrations/hammerspoon/index.js';
+import {TIMINGS} from '../config/timings.js'; // ← use centralized timings
 
 /** Optional fast re‑sync hook injected by state-sync. */
 let _pokeSync = null;
@@ -43,20 +44,9 @@ const asBundleTarget = (bundleId) =>
 /** Tiny sleep helper. */
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-/**
- * Action timing (ms).
- * Values balance snappy feedback with typical macOS window animation durations.
- */
-const DUR = Object.freeze({
-    minimizeBusy: 800,   // mask while windows slide to Dock
-    focusBusy: 600,      // mask brief focus/raise animations
-    launchBusy: 1300,    // give time for the first window after launch
-    errorBusy: 900,      // keep the error color visible for a moment
-    pokeMs: 90,          // fast state recheck after action
-    postLaunchFocusDelay: 120, // small pause before focusing post‑launch
-    quitBlinkMs: 600,    // red blink length for long‑press
-    quitBusy: 1100,      // mask while close‑all resolves
-});
+/** Local aliases from centralized timings. */
+const G = TIMINGS.gesture;
+const DUR = TIMINGS.controller;
 
 /**
  * Controller that binds a Launchpad port to application actions.
@@ -93,7 +83,7 @@ export class AppController {
         this.decoder = new GestureDecoder(
             (padId, meta) => this.onPress(padId, meta),
             (padId) => this.onLongPress(padId),
-            {doubleTapMs: 480, longPressMs: 800, bounceMs: 28, cooldownMs: 0},
+            {doubleTapMs: G.doubleTapMs, longPressMs: G.longPressMs, bounceMs: G.bounceMs, cooldownMs: G.cooldownMs},
         );
 
         // Wire device events → gesture decoder.

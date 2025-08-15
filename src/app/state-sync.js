@@ -6,6 +6,7 @@ import {isBusy} from '../utils/busy-registry.js';
 import {LedState, LedStateColors} from '../launchpad/states.js';
 import {stateToColor} from '../launchpad/led-state-machine.js';
 import {logger} from '../utils/logger.js';
+import {TIMINGS} from '../config/timings.js';
 
 /**
  * Ensures the target string is prefixed with "bundle:".
@@ -21,14 +22,14 @@ const asBundleTarget = (bundleId) =>
  * @param {Object} params.appService - Service providing application state data.
  * @param {Object} params.lpPort - Launchpad port object ({ setPad } method required).
  * @param {Object} params.appMappings - Mapping of pad IDs to application configurations.
- * @param {number} [params.intervalMs=140] - Interval between sync ticks in milliseconds.
+ * @param {number} [params.intervalMs=TIMINGS.sync.intervalMsDefault] - Interval between sync ticks in milliseconds.
  * @returns {{ stop: () => void, poke: (padId?: number) => void }}
  */
 export function startStateSync({
                                    appService,
                                    lpPort,
                                    appMappings,
-                                   intervalMs = 140,
+                                   intervalMs = TIMINGS.sync.intervalMsDefault,
                                }) {
     let timer = null;
     let inFlight = false;

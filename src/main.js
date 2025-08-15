@@ -24,6 +24,7 @@ import {ensureReady} from './integrations/hammerspoon/index.js';
 import {logger} from './utils/logger.js';
 import {playBootAnimation} from './launchpad/boot-animation.js';
 import {playShutdownAnimation} from './launchpad/shutdown-animations.js';
+import {TIMINGS} from './config/timings.js'; // ← use centralized timings
 
 async function main() {
     logger.info('[BOOT] starting');
@@ -46,32 +47,25 @@ async function main() {
     await preflight;
     logger.info('[HS] preflight OK');
 
-    // 4) Startup animation.
-    //    Let the animation use its own tuned defaults (fast and low‑CPU).
-    //    Any error here is non‑fatal; visuals should not block boot.
+    // 4) Startup animation — use the tuned values from TIMINGS.animations.boot.
     try {
-        await playBootAnimation(lp, APP_MAPPINGS, {
-            // useAllPads defaults to true; keep it explicit for clarity.
-            useAllPads: true,
-            // Do not override timing here; boot-animation has tuned defaults.
-        });
+        await playBootAnimation(lp, APP_MAPPINGS, {...TIMINGS.animations.boot});
     } catch (e) {
         logger.warn('[BOOT] startup animation skipped', {err: String(e)});
     }
 
-    // 5) Controller (gestures → Hammerspoon actions) and periodic LED sync.
+    // 5) Controller and periodic LED sync.
     const ctl = createAppController({lpPort: lp, appMappings: APP_MAPPINGS});
     const appService = ctl.app;
 
-    // Bulk state sync interval: 100–200 ms recommended; 140 ms balances CPU & responsiveness.
-    const intervalMs = 140;
+    // Bulk state sync cadence from TIMINGS.
+    const intervalMs = TIMINGS.sync.intervalMsDefault;
     const syncCtl = startStateSync({appService, lpPort: lp, appMappings: APP_MAPPINGS, intervalMs});
 
-    // Optional “poke” allows the controller to request a quicker re‑paint after actions.
     if (syncCtl?.poke) setPokeSync(syncCtl.poke);
     logger.info('[SYNC] started', {intervalMs});
 
-    // Initial nudge so mapped pads settle immediately (e.g., dim background).
+    // Initial nudge so mapped pads settle immediately.
     if (syncCtl?.poke) {
         let count = 0;
         for (const k of Object.keys(APP_MAPPINGS)) {
@@ -87,7 +81,6 @@ async function main() {
     // ────────────────────────── Controlled shutdown ──────────────────────────
     let quitting = false;
 
-    // If we enable raw TTY mode for keypress handling, make sure we restore it.
     const restoreTTY = () => {
         try {
             if (process.stdin.isTTY) process.stdin.setRawMode(false);
@@ -105,13 +98,10 @@ async function main() {
         } catch {
         }
 
-        // Short “goodbye” sweep on mapped pads. Any error is ignored.
+        // “Goodbye” sweep using TIMINGS.animations.shutdown.
         try {
             const mappedPads = Object.keys(APP_MAPPINGS).map(Number).filter(Number.isFinite);
-            await playShutdownAnimation(lp, mappedPads, {
-                // Let the animation use its tuned fast defaults; only pass pads.
-                // totalDurationMs, passes, trail can be customized if desired.
-            });
+            await playShutdownAnimation(lp, mappedPads, {...TIMINGS.animations.shutdown});
         } catch {
         }
 
@@ -130,7 +120,7 @@ async function main() {
         process.exit(0);
     }
 
-    // ESC to quit; also catch Ctrl+C when in raw keypress mode.
+    // ESC to quit; also catch Ctrl+C in raw keypress mode.
     readline.emitKeypressEvents(process.stdin);
     if (process.stdin.isTTY) {
         process.stdin.setRawMode(true);

@@ -83,9 +83,9 @@ cp ./hammerspoon/launchpad-shortcut-deck/init.lua ~/.hammerspoon/launchpad-short
 require('launchpad-shortcut-deck')
 ```
 
-> ⚠ If you already have a custom `~/.hammerspoon/init.lua`, the line above must be present somewhere in it so the module
-> loads.  
-> ℹ This repo also includes a file at [`hammerspoon/init.lua`](./hammerspoon/init.lua) **only as an example** — it will
+> ⚠️ If you already have a custom `~/.hammerspoon/init.lua`, the line above must be present somewhere in it so the
+> module loads.  
+> ℹ️ This repo also includes a file at [`hammerspoon/init.lua`](./hammerspoon/init.lua) **only as an example** — it will
 > not run by itself. Use it as a reference if you need to integrate the module into an existing config.
 
 You can automate this step with:
