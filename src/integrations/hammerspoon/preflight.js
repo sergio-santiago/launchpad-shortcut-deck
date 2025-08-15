@@ -1,4 +1,3 @@
-// src/integrations/hammerspoon/preflight.js
 /**
  * Preflight for the Hammerspoon integration.
  *

@@ -1,4 +1,3 @@
-// src/config/app-mappings.js
 // Mapping: padId (Launchpad MIDI note) → target application.
 // Always use explicit bundle IDs (prefixed with "bundle:") for reliable targeting.
 // This table is static at runtime, so lookups are O(1) with zero runtime overhead.
