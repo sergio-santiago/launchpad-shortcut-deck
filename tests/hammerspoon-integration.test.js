@@ -1,61 +1,64 @@
-// NOTE: This is a manual integration test. It will open/close apps on your system.
-// Run with: pnpm test:hammerspoon
+// Manual integration test for the Hammerspoon bridge.
+//
+// It will open/close real apps on your Mac.
+// Run with:  node tests/hammerspoon-integration.test.js
+//
+// What this covers
+// - End‑to‑end control through AppleScript → Hammerspoon Lua API
+// - Action sequence per app: open → focus → minimize → focus → maximize
+//   → fullscreen ON/OFF → close windows (keep running) → focus/open → quit
+// - State verification after each step via getState/getStatesBulk
+//
+// Requirements
+// - macOS only
+// - Hammerspoon running with Accessibility permission enabled:
+//     System Settings → Privacy & Security → Accessibility → enable “Hammerspoon”
+// - The Lua API from hammerspoon/launchpad-shortcut-deck/init.lua must be loaded
 
-// Purpose: Manual integration test for the Hammerspoon bridge.
-// Runs through a series of open/focus/minimize/maximize/fullscreen/close/quit
-// operations for a list of applications, with small delays between them,
-// so you can manually verify everything works end-to-end.
+import {actions as hs, ensureReady, getIntegration} from '../src/integrations/hammerspoon/index.js';
+import {logger} from '../src/utils/logger.js';
 
-/**
- * Integration imports:
- *  - ensureReady(): Waits until the Lua API in Hammerspoon is loaded and callable.
- *  - hs: Object exposing Hammerspoon control actions (`open`, `close`, etc.).
- */
-import {actions as hs, ensureReady} from '../src/integrations/hammerspoon/index.js'
-
-/**
- * Applications to test.
- * These are human-readable names as passed to the public API — they will
- * be resolved to bundle IDs where necessary.
- */
-const APPS = ['Safari', 'Visual Studio Code', 'Google Chrome', 'Music'] // Add more as needed
-
-/**
- * Delay timings (in milliseconds) between actions.
- * Adjust to account for application load times and macOS animations.
- */
-const D = {
-    afterOpen: 1200,       // Wait after opening before the next action
-    betweenOps: 800,       // Default gap between actions
-    afterFullscreen: 1200, // Wait after entering/exiting fullscreen
-    afterClose: 1000,      // Wait after closing
+if (process.platform !== 'darwin') {
+    logger.error('[TEST] This test is macOS-only.');
+    process.exit(1);
 }
 
-/** Utility: pause execution for a given number of milliseconds. */
-const sleep = (ms) => new Promise(res => setTimeout(res, ms))
+// Override with env, e.g.:
+//   APPS="bundle:com.apple.Safari,bundle:com.google.Chrome" node tests/hammerspoon-integration.test.js
+const APPS =
+    (process.env.APPS?.split(',').map(s => s.trim()).filter(Boolean)) ||
+    [
+        'bundle:com.apple.Safari',
+        'bundle:com.microsoft.VSCode',
+        'bundle:com.google.Chrome',
+        'bundle:com.apple.Music',
+    ];
 
-/** Utility: check if a returned value is a lowercase "ok" string. */
-const ok = (v) => typeof v === 'string' && v.trim().toLowerCase() === 'ok'
+// Delays tuned to be responsive while letting macOS UI settle (ms).
+const D = Object.freeze({
+    afterOpen: 900,
+    betweenOps: 600,
+    afterFullscreen: 900,
+    afterClose: 800,
+});
 
-/** Tracks whether any action in the test sequence has failed. */
+const sleep = (ms) => new Promise(res => setTimeout(res, ms));
+const ok = (v) => typeof v === 'string' && v.trim().toLowerCase() === 'ok';
+
 let hadError = false;
 
-/**
- * Run a single Hammerspoon action and log the result with emojis.
- *
- * @param {string} label - Descriptive label for logging.
- * @param {Function} fn - Function returning a Promise<string> from hs.actions.
- * @returns {Promise<boolean>} - true if the result was "ok", false otherwise.
- */
+// ───────────────────────── helpers ─────────────────────────
+
+/** Run an hs action, log the result, and track failures. */
 async function run(label, fn) {
     try {
         const res = await fn();
         const isOk = ok(res);
-        console.log(`${isOk ? '✅' : '⚠️'} ${label}:`, res);
+        logger[isOk ? 'info' : 'warn'](`${isOk ? '✅' : '⚠️'} ${label}: ${res}`);
         if (!isOk) hadError = true;
         return isOk;
     } catch (e) {
-        console.error(`❌ ${label}:`, e?.message || e);
+        logger.error(`❌ ${label}: ${e?.message || e}`);
         hadError = true;
         return false;
     } finally {
@@ -64,74 +67,129 @@ async function run(label, fn) {
 }
 
 /**
- * Test all operations for a single application in order:
- *  1. Open — launch the app if not running.
- *  2. Focus — bring it to the front.
- *  3. Minimize — minimize the main window.
- *  4. Focus again — restore focus after minimizing.
- *  5. Maximize — maximize the main window.
- *  6. Toggle fullscreen ON and OFF.
- *  7. Close windows (keep running) — close all windows while keeping the process in memory.
- *  8. Focus + Open — bring the app forward again and ensure a new window is created.
- *  9. Quit — fully quit the application (equivalent to ⌘Q).
- *
- * This sequence validates both “soft close” (windows only) and “hard close” (quit app) behaviors.
- *
- * @param {string} app - Human-readable application name.
- */async function testOne(app) {
-    console.log(`\n───────────── Testing: ${app} ─────────────`)
-
-    // --- initial cycle ---
-    await run(`${app} · open`, () => hs.open(app))
-    await sleep(D.afterOpen)
-
-    await run(`${app} · focus`, () => hs.focus(app))
-    await run(`${app} · minimize`, () => hs.minimize(app))
-    await run(`${app} · focus (post-minimize)`, () => hs.focus(app))
-    await run(`${app} · maximize`, () => hs.maximize(app))
-
-    await run(`${app} · fullscreen ON`, () => hs.fullscreen(app, true))
-    await sleep(D.afterFullscreen)
-    await run(`${app} · fullscreen OFF`, () => hs.fullscreen(app, false))
-
-    // --- new: close windows but keep the process running ---
-    await run(`${app} · close windows (keep running)`, () => hs.close(app))
-
-    // Bring the app to the front again; some apps won't open a window on focus,
-    // so ensure a window exists by calling open explicitly
-    await run(`${app} · focus (after close)`, () => hs.focus(app))
-    await run(`${app} · open (ensure window)`, () => hs.open(app))
-    await sleep(D.afterOpen)
-
-    // --- final: quit the app completely ---
-    await run(`${app} · quit`, () => hs.quit(app))
-    await sleep(D.afterClose)
+ * Fetch latest state for a target and log it.
+ * Returns the parsed state object (or a fallback).
+ */
+async function getState(api, target) {
+    try {
+        const st = await api.getState(target);
+        logger.debug('[STATE]', {target, ...st});
+        return st || {target, running: false};
+    } catch (e) {
+        logger.warn('[STATE] getState failed', {target, err: String(e)});
+        return {target, running: false};
+    }
 }
 
 /**
- * Entry point:
- *  - Ensure Hammerspoon Lua API is ready.
- *  - Iterate through all configured apps and run tests.
+ * Minimal expectation helper:
+ *  - `cond` should be a boolean
+ *  - Logs pass/fail and flips `hadError` on fail
  */
-async function main() {
-    console.log('[BOOT] Hammerspoon preflight…')
-    await ensureReady()
-    console.log('[OK] Hammerspoon ready')
+function expect(cond, label, extra = undefined) {
+    if (cond) {
+        logger.info(`   ↳ ✅ ${label}`);
+    } else {
+        logger.warn(`   ↳ ❌ ${label}`, extra ? {extra} : undefined);
+        hadError = true;
+    }
+}
 
-    // IMPORTANT: For minimize/maximize/fullscreen/close to work,
-    // grant Hammerspoon Accessibility permissions in:
-    //   System Settings → Privacy & Security → Accessibility
+// ───────────────────── per‑app test flow ───────────────────
 
-    for (const app of APPS) {
-        await testOne(app)
+/**
+ * Exercise the full action sequence for a single bundle target and
+ * verify expected state transitions along the way.
+ */
+async function testOne(api, target) {
+    logger.info(`\n───────────── Testing: ${target} ─────────────`);
+
+    // Open → app should be running
+    await run(`${target} · open`, () => hs.open(target));
+    await sleep(D.afterOpen);
+    let st = await getState(api, target);
+    expect(!!st.running, 'should be running after open');
+
+    // Focus → ideally focused OR at least visible
+    await run(`${target} · focus`, () => hs.focus(target));
+    st = await getState(api, target);
+    expect(!!st.running, 'still running after focus');
+    expect(!!(st.focused || st.hasVisibleWindows), 'focused or has a visible window after focus', st);
+
+    // Minimize → either “all minimized” or zero visible windows
+    await run(`${target} · minimize`, () => hs.minimize(target));
+    st = await getState(api, target);
+    expect(!!st.running, 'still running after minimize');
+    expect(!!(st.allMinimized || st.visibleCount === 0), 'minimized state reflects in windows', st);
+
+    // Focus again → should surface a window and likely be focused
+    await run(`${target} · focus (post-minimize)`, () => hs.focus(target));
+    st = await getState(api, target);
+    expect(!!st.running, 'still running after re-focus');
+    expect(!!(st.hasVisibleWindows || st.windowCount > 0), 'has at least one visible or existing window', st);
+
+    // Maximize → must still be running (some apps refuse maximize; do not hard fail)
+    await run(`${target} · maximize`, () => hs.maximize(target));
+    st = await getState(api, target);
+    expect(!!st.running, 'still running after maximize');
+
+    // Fullscreen ON/OFF → allow time for transitions
+    await run(`${target} · fullscreen ON`, () => hs.fullscreen(target, true));
+    await sleep(D.afterFullscreen);
+    st = await getState(api, target);
+    expect(!!st.running, 'still running in fullscreen ON');
+
+    await run(`${target} · fullscreen OFF`, () => hs.fullscreen(target, false));
+    await sleep(D.afterFullscreen);
+    st = await getState(api, target);
+    expect(!!st.running, 'still running after fullscreen OFF');
+
+    // Close windows (keep running)
+    await run(`${target} · close windows (keep running)`, () => hs.close(target));
+    await sleep(D.afterClose);
+    st = await getState(api, target);
+    expect(!!st.running, 'process remains running after closing windows');
+    expect(!(st.hasVisibleWindows && st.windowCount > 0), 'no visible windows after close', st);
+
+    // Ensure a usable window exists again
+    await run(`${target} · focus (after close)`, () => hs.focus(target));
+    await run(`${target} · open (ensure window)`, () => hs.open(target));
+    await sleep(D.afterOpen);
+    st = await getState(api, target);
+    expect(!!(st.hasVisibleWindows || st.windowCount > 0), 'window exists after reopen', st);
+
+    // Quit → not running
+    await run(`${target} · quit`, () => hs.quit(target));
+    await sleep(D.afterClose);
+    st = await getState(api, target);
+    expect(!st.running, 'not running after quit');
+}
+
+// ───────────────────────── entry point ──────────────────────
+
+(async () => {
+    logger.info('[BOOT] Hammerspoon preflight…');
+    await ensureReady();
+    logger.info('[OK] Hammerspoon ready');
+
+    // Use the high‑level integration for state queries
+    const api = getIntegration();
+
+    // Optional: warm up a bulk query to validate targets are accepted
+    try {
+        const bulk = await api.getStatesBulk(APPS);
+        logger.debug('[STATE] initial bulk', {count: Array.isArray(bulk) ? bulk.length : 0});
+    } catch (e) {
+        logger.warn('[STATE] initial bulk failed', {err: String(e)});
+    }
+
+    for (const target of APPS) {
+        await testOne(api, target);
     }
 
     if (hadError) {
-        console.error('\n[FAIL] One or more actions failed.')
-        process.exit(1)
+        logger.error('\n[FAIL] One or more actions or state checks failed.');
+        process.exit(1);
     }
-
-    console.log('\n[DONE] Test suite finished.')
-}
-
-await main()
+    logger.info('\n[DONE] Test suite finished.');
+})();
