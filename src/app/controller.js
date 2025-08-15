@@ -134,7 +134,9 @@ export class AppController {
                 logger.info('[CTL] minimize-all', {padId, target: label});
 
                 const r = await this.app.minimizeAll(hsTarget);
-                if (r !== 'ok') throw new Error(`minimizeAll failed: ${r}`);
+                if (r !== 'ok') { // noinspection ExceptionCaughtLocallyJS
+                    throw new Error(`minimizeAll failed: ${r}`);
+                }
 
                 if (_pokeSync) setTimeout(() => _pokeSync(padId), DUR.pokeMs);
                 return;
@@ -153,7 +155,9 @@ export class AppController {
                 logger.info('[CTL] launch', {padId, target: label});
 
                 const rLaunch = await this.app.launch(hsTarget);
-                if (rLaunch !== 'ok') throw new Error(`launch failed: ${rLaunch}`);
+                if (rLaunch !== 'ok') { // noinspection ExceptionCaughtLocallyJS
+                    throw new Error(`launch failed: ${rLaunch}`);
+                }
 
                 await sleep(DUR.postLaunchFocusDelay);
                 r = await this.app.focus(hsTarget);
@@ -207,7 +211,9 @@ export class AppController {
                     : this.app.closeAll.bind(this.app);
 
             const r = await closeFn(hsTarget);
-            if (r !== 'ok') throw new Error(`closeAll failed: ${r}`);
+            if (r !== 'ok') { // noinspection ExceptionCaughtLocallyJS
+                throw new Error(`closeAll failed: ${r}`);
+            }
 
             // Assigned but currently stopped/hidden.
             this.lp.setPad(padId, LedStateColors[LedState.ASSIGNED_STOPPED]);
